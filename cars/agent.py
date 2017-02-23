@@ -32,19 +32,19 @@ class SimpleCarAgent(Agent):
 
     def __init__(self, history_data=int(50000)):
         """
-        Создаёт машинку
-        :param history_data: количество хранимых нами данных о результатах предыдущих шагов
+        Creates car
+        :param history_data: stores previous actions 
         """
-        self.evaluate_mode = False  # этот агент учится или экзаменутеся? если учится, то False
-        self._rays = 7# выберите число лучей ладара; например, 5
+        self.evaluate_mode = False  # (True) if we evaluate model, otherwise - training mode (False)
+        self._rays = 7 # ladar beams count
         # here +2 is for 2 inputs from elements of Action that we are trying to predict
         self.neural_net = Network([ self.rays + 4,    
                                     self.rays + 4,  
                                     self.rays + 4,  
-                                    #self.rays + 4,                           
-                                   # внутренние слои сети: выберите, сколько и в каком соотношении вам нужно
-                                   # например, (self.rays + 4) * 2 или просто число
+                                    #self.rays + 4,        
+                                    # hidden layers, example:  ((self.rays + 4) * 2)                       
                                    1],
+                                   #cost function
                                    output_function=lambda x: x, output_derivative=lambda x: 1)
         self.sensor_data_history = deque([], maxlen=history_data)
         self.chosen_actions_history = deque([], maxlen=history_data)
@@ -53,6 +53,8 @@ class SimpleCarAgent(Agent):
         self.learning_rate = 0.04
         self.epoch_size = 30
 
+        #shows mean reward to track training results
+        #TODO make it better
         plt.ion()       
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111)
@@ -60,15 +62,13 @@ class SimpleCarAgent(Agent):
         self.line1, = self.ax.plot([], [], 'b-')
         self.ax.set_xlim(0, 100)
         self.ax.set_ylim(-8, 8)
-        self.rewards = []
-        
-        #print (self.line1)
+        self.rewards = []        
       
 
     @classmethod
     def from_weights(cls, layers, weights, biases):
         """
-        Создание агента по параметрам его нейронной сети. Разбираться не обязательно.
+        Creates agent with neural network params.        
         """
         agent = SimpleCarAgent()
         agent._rays = weights[0].shape[1] - 4
@@ -94,7 +94,7 @@ class SimpleCarAgent(Agent):
 
     @classmethod
     def from_string(cls, s):
-        from numpy import array  # это важный импорт, без него не пройдёт нормально eval
+        from numpy import array  # special for normal eval execution
         layers, weights, biases = eval(s.replace("\n", ""), locals())
         return cls.from_weights(layers, weights, biases)
 
@@ -118,93 +118,81 @@ class SimpleCarAgent(Agent):
     def rays(self):
         return self._rays
 
-    def choose_action(self, sensor_info):
-        # хотим предсказать награду за все действия, доступные из текущего состояния
+    def choose_action(self, sensor_info):       
+        # try to predict reward for all actions that are avaliable from current state
         rewards_to_controls_map = {}
-        # дискретизируем множество значений, так как все возможные мы точно предсказать не сможем
-        for steering in np.linspace(-1, 1, 3):  # выбирать можно и другую частоту дискретизации, но
-            for acceleration in np.linspace(-0.75, 0.75, 3):  # в наших тестах будет именно такая
+
+        # make discrete a values set in order to predict just some of them
+        for steering in np.linspace(-1, 1, 3):  # setting discrete frequency
+            for acceleration in np.linspace(-0.75, 0.75, 3): 
                 action = Action(steering, acceleration)
                 agent_vector_representation = np.append(sensor_info, action)
                 agent_vector_representation = agent_vector_representation.flatten()[:, np.newaxis]
                 predicted_reward = float(self.neural_net.feedforward(agent_vector_representation))
                 rewards_to_controls_map[predicted_reward] = action
 
-        # ищем действие, которое обещает максимальную награду
+        # search for action with best reward
         rewards = list(rewards_to_controls_map.keys())
         highest_reward = max(rewards)
         best_action = rewards_to_controls_map[highest_reward]
 
-        # Добавим случайности, дух авантюризма. Иногда выбираем совершенно
-        # рандомное действие
+        # Sometimes we make random action to evaluate the trained model behaviour       
         if (not self.evaluate_mode) and (random.random() < 0.05):
             highest_reward = rewards[np.random.choice(len(rewards))]
             best_action = rewards_to_controls_map[highest_reward]
-            # следующие строки помогут вам понять, что предсказывает наша сеть
+            # prints the result (prediction) from network
             #print("Chosen random action w/reward: {}".format(highest_reward))
         #else:
             #print("Chosen action w/reward: {}".format(highest_reward))
-
-        # запомним всё, что только можно: мы хотим учиться на своих ошибках
+     
+        # store data for training step
         self.sensor_data_history.append(sensor_info)
         self.chosen_actions_history.append(best_action)
-        self.reward_history.append(0.0)  # мы пока не знаем, какая будет награда, это
-        # откроется при вызове метода receive_feedback внешним миром
+        self.reward_history.append(0.0)  #here we do not know what reward is
+        # method receive_feedback calculates real reward from predicted action
 
         return best_action
 
     def receive_feedback(self, reward, train_every=50, reward_depth=7):
         """
-        Получить реакцию на последнее решение, принятое сетью, и проанализировать его
-        :param reward: оценка внешним миром наших действий
-        :param train_every: сколько нужно собрать наблюдений, прежде чем запустить обучение на несколько эпох
-        :param reward_depth: на какую глубину по времени распространяется полученная награда
+        Receive feedback on the latest neural network decision and analyze it      
+        :param reward: real world reward
+        :param train_every: sufficient data count for training mode        
+        :param reward_depth: how many actions in a row affects on reward        
         """
-        # считаем время жизни сети; помогает отмерять интервалы обучения
+        # training intervals       
         self.step += 1
 
-        # начиная с полной полученной истинной награды,
-        # размажем её по предыдущим наблюдениям
-        # чем дальше каждый раз домножая её на 1/2
-        # (если мы врезались в стену - разумно наказывать не только последнее
-        # действие, но и предшествующие)
+               # make reward influence on previous actions
+        # so if we hit a wall we should take into account penalty in previous reward_depth steps
         i = -1
         while len(self.reward_history) > abs(i) and abs(i) < reward_depth:
             self.reward_history[i] += reward
             reward *= 0.5
             i -= 1
 
-        # Если у нас накопилось хоть чуть-чуть данных, давайте потренируем нейросеть
-        # прежде чем собирать новые данные
-        # (проверьте, что вы в принципе храните достаточно данных (параметр `history_data` в `__init__`),
-        # чтобы условие len(self.reward_history) >= train_every выполнялось
+        #we can train network if we have sufficient amount of data
+        #len(self.reward_history) >= train_every       
         if not self.evaluate_mode and (len(self.reward_history) >= train_every) and not (self.step % train_every):
                       
-
             X_train = np.concatenate([self.sensor_data_history, self.chosen_actions_history], axis=1)
             y_train = self.reward_history
             train_data = [(x[:, np.newaxis], y) for x, y in zip(X_train, y_train)]
 
+            #collecting data for offline training and model evaluation
+            
             with open('training_data.csv', 'a') as csvfile:
                 writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                for row in train_data:
-                   # print (row)
+                for row in train_data:            
                     writer.writerow(np.append(row[0],row[1]))
 
-            mn = np.mean(np.array(self.reward_history));
-            #self.line.set_data(self.step, mn)
-            #plt.draw()
+            mn = np.mean(np.array(self.reward_history));    
+
             self.rewards.append(mn)
             items = np.arange(len(self.rewards))
 
-            if (len(self.rewards) == len(items) ):
-                print ('True')
-            #plt.plot(self.rewards)
-            #plt.draw()
-            self.line1.set_data(np.arange(len(self.rewards)),self.rewards)
-          
-            self.fig.canvas.draw()
-            #plt.scatter(self.step, mn)
+            self.line1.set_data(np.arange(len(self.rewards)),self.rewards)          
+            self.fig.canvas.draw()         
            
             print ("mean reward = ", mn)
             self.neural_net.SGD( training_data=train_data, epochs=self.epoch_size, 

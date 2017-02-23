@@ -27,25 +27,27 @@ class World(metaclass=ABCMeta):
 
 
 class SimpleCarWorld(World):
-    COLLISION_PENALTY =  32 * 1e0# выберите сами
-    HEADING_REWARD =  32 * 1e-1# выберите сами
-    WRONG_HEADING_PENALTY = 32 * 1e0 # выберите сами
-    IDLENESS_PENALTY =  32 * 1e-1# выберите сами
-    SPEEDING_PENALTY =  32 * 1e-1# выберите сами
-    MIN_SPEED =  0.1 * 1e0# выберите сами
-    MAX_SPEED =  0.7 * 1e0# выберите сами
+    
+    # most important constants to make the whole program works
+    COLLISION_PENALTY =  32 * 1e0
+    HEADING_REWARD =  32 * 1e-1
+    WRONG_HEADING_PENALTY = 32 * 1e0 
+    IDLENESS_PENALTY =  32 * 1e-1
+    SPEEDING_PENALTY =  32 * 1e-1
+    MIN_SPEED =  0.1 * 1e0
+    MAX_SPEED =  0.7 * 1e0
 
     size = (800, 600)
 
     def __init__(self, num_agents, car_map, Physics, agent_class, **physics_pars):
         """
-        Инициализирует мир
-        :param num_agents: число агентов в мире
-        :param car_map: карта, на которой всё происходит (см. track.py0
-        :param Physics: класс физики, реализующий столкновения и перемещения
-        :param agent_class: класс агентов в мире
-        :param physics_pars: дополнительные параметры, передаваемые в конструктор класса физики
-        (кроме car_map, являющейся обязательным параметром конструктора)
+        World initialization
+        :param num_agents: agents count in world
+        :param car_map: map where everything works
+        :param Physics: performs collisions and movements
+        :param agent_class: agent class in the world
+        :param physics_pars: special params for physics 
+        (
         """
         self.physics = Physics(car_map, **physics_pars)
         self.map = car_map
@@ -57,10 +59,9 @@ class SimpleCarWorld(World):
 
     def set_agents(self, agents=1, agent_class=None):
         """
-        Поместить в мир агентов
-        :param agents: int или список Agent, если int -- то обязателен параметр agent_class, так как в мир присвоятся
-         agents агентов класса agent_class; если список, то в мир попадут все агенты из списка
-        :param agent_class: класс создаваемых агентов, если agents - это int
+        Set agents
+        :param agents: int or list of agents, if int -- then agent_class parametr is required        
+        :param agent_class: class of created agents
         """
         pos = (self.map[0][0] + self.map[0][1]) / 2
         vel = 0
@@ -79,14 +80,7 @@ class SimpleCarWorld(World):
         self._agent_surfaces = []
         self._agent_images = []
 
-    def transition(self):
-        """
-        Логика основного цикла:
-         подсчёт для каждого агента видения агентом мира,
-         выбор действия агентом,
-         смена состояния
-         и обработка реакции мира на выбранное действие
-        """
+    def transition(self):  
         for a in self.agents:
             vision = self.vision_for(a)
             action = a.choose_action(vision)
@@ -98,12 +92,10 @@ class SimpleCarWorld(World):
             a.receive_feedback(self.reward(next_agent_state, collision))
 
     def reward(self, state, collision):
-        """
-        Вычисление награды агента, находящегося в состоянии state.
-        Эту функцию можно (и иногда нужно!) менять, чтобы обучить вашу сеть именно тем вещам, которые вы от неё хотите
-        :param state: текущее состояние агента
-        :param collision: произошло ли столкновение со стеной на прошлом шаге
-        :return reward: награду агента (возможно, отрицательную)
+        """        
+        :param state: current agent state
+        :param collision: was collision on previous step
+        :return reward: agent reward
         """
         a = np.sin(angle(-state.position, state.heading))
         heading_reward = 1 if a > 0.1 else a if a > 0 else 0
@@ -122,10 +114,7 @@ class SimpleCarWorld(World):
                + idle_penalty + speeding_penalty   
 
     def eval_reward(self, state, collision):
-        """
-        Награда "по умолчанию", используется в режиме evaluate
-        Удобно, чтобы не приходилось отменять свои изменения в функции reward для оценки результата
-        """
+      
         a = -np.sin(angle(-state.position, state.heading))
         heading_reward = 1 if a > 0.1 else a if a > 0 else 0
         heading_penalty = a if a <= 0 else 0
@@ -137,10 +126,7 @@ class SimpleCarWorld(World):
             + idle_penalty + speeding_penalty
 
     def run(self, steps=None):
-        """
-        Основной цикл мира; по завершении сохраняет текущие веса агента в файл network_config_agent_n_layers_....txt
-        :param steps: количество шагов цикла; до внешней остановки, если None
-        """
+       
         scale = self._prepare_visualization()
         for _ in range(steps) if steps is not None else itertools.count():
             self.transition()
@@ -158,14 +144,7 @@ class SimpleCarWorld(World):
             except AttributeError:
                 pass
 
-    def evaluate_agent(self, agent, steps=1000, visual=True):
-        """
-        Прогонка цикла мира для конкретного агента (см. пример использования в комментариях после if _name__ == "__main__")
-        :param agent: SimpleCarAgent
-        :param steps: количество итераций цикла
-        :param visual: рисовать картинку или нет
-        :return: среднее значение награды агента за шаг
-        """
+    def evaluate_agent(self, agent, steps=1000, visual=True):  
         agent.evaluate_mode = True
         self.set_agents([agent])
         rewards = []
@@ -191,10 +170,9 @@ class SimpleCarWorld(World):
 
     def vision_for(self, agent):
         """
-        Строит видение мира для каждого агента
-        :param agent: машинка, из которой мы смотрим
-        :return: список из модуля скорости машинки, направленного угла между направлением машинки
-        и направлением на центр и `agent.rays` до ближайших стен трека (запустите картинку, и станет совсем понятно)
+        Creates world vision for every agent      
+        :param agent: car from which we observe the world
+        :return: list of speed, angle (car direction, center direction), 'agent.rays' to closest walls        
         """
         state = self.agent_states[agent]
         vision = [abs(state.velocity), np.sin(angle(-state.position, state.heading))]
@@ -232,7 +210,7 @@ class SimpleCarWorld(World):
 
     def visualize(self, scale):
         """
-        Рисует картинку. Этот и все "приватные" (начинающиеся с _) методы необязательны для разбора.
+        Draw the picture        
         """
         for i, agent in enumerate(self.agents):
             state = self.agent_states[agent]
@@ -319,16 +297,3 @@ if __name__ == "__main__":
     random.seed(3)
     m = generate_map(8, 5, 3, 3)
     SimpleCarWorld(1, m, SimplePhysics, SimpleCarAgent, timedelta=0.2).run()
-
-    # если вы хотите продолжить обучение уже существующей модели, вместо того,
-    # чтобы создавать новый мир с новыми агентами, используйте код ниже:
-    # # он загружает агента из файла
-    # agent = SimpleCarAgent.from_file('filename.txt')
-    # # создаёт мир
-    # w = SimpleCarWorld(1, m, SimplePhysics, SimpleCarAgent, timedelta=0.2)
-    # # подключает к нему агента
-    # w.set_agents([agent])
-    # # и запускается
-    # w.run()
-    # # или оценивает агента в этом мире
-    # print(w.evaluate_agent(agent, 500))

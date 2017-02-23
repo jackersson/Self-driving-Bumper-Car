@@ -1,4 +1,3 @@
-# from HW_3.cars import *
 from cars.world import SimpleCarWorld
 from cars.agent import SimpleCarAgent
 from cars.physics import SimplePhysics
